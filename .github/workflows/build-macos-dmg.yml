@@ -5,6 +5,10 @@ on:
     tags:
       - '*'  # Run only when a tag is pushed
 
+# Add permissions block to explicitly grant release creation permission
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -124,5 +128,3 @@ jobs:
       uses: softprops/action-gh-release@v2
       with:
         files: MSTeamsWaker-${{ env.VERSION }}.dmg
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
