@@ -28,9 +28,9 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install PyQt5 pyinstaller
+        pip install PyQt5 pyinstaller dmgbuild
         sudo apt-get update
-        sudo apt-get install -y imagemagick genisoimage
+        sudo apt-get install -y imagemagick
     
     - name: Create app icon
       run: |
@@ -99,24 +99,77 @@ jobs:
         if [ -f app_icon.png ]; then
           cp app_icon.png dmg_contents/MSTeamsWaker.app/Contents/Resources/AppIcon.icns
         fi
-        
-        # Create a background image
-        convert -size 800x500 gradient:blue-black -font Arial -pointsize 36 -fill white -gravity center -annotate 0 "MS Teams Waker ${VERSION}\nDrag to Applications folder to install" dmg_contents/background.png
-        
-        # Create a symbolic link to /Applications
-        mkdir -p dmg_contents/Applications
-        ln -s /Applications dmg_contents/Applications
-        
-        # Debug output
-        find dmg_contents -type f | sort
     
-    - name: Create DMG using mkisofs
+    - name: Create DMG using dmgbuild
       run: |
+        # Create a background image
+        convert -size 800x500 gradient:blue-black -font Arial -pointsize 36 -fill white -gravity center -annotate 0 "MS Teams Waker ${VERSION}\nDrag to Applications folder to install" background.png
+        
+        # Create dmgbuild settings file
+        cat > dmgbuild_settings.py << EOF
+        # -*- coding: utf-8 -*-
+        from __future__ import unicode_literals
+        
+        import os.path
+        
+        # Volume format (see hdiutil create -help)
+        format = defines.get('format', 'UDBZ')
+        
+        # Volume size
+        size = defines.get('size', '100M')
+        
+        # Files to include
+        files = ['dmg_contents/MSTeamsWaker.app']
+        
+        # Symlinks to create
+        symlinks = {'Applications': '/Applications'}
+        
+        # Volume icon
+        #badge_icon = 'app_icon.png'
+        
+        # Volume name
+        volume_name = 'MS Teams Waker ${VERSION}'
+        
+        # Volume background
+        background = 'background.png'
+        
+        # Window configuration
+        window_rect = ((100, 100), (640, 480))
+        
+        # Icon locations
+        icon_locations = {
+            'MSTeamsWaker.app': (140, 240),
+            'Applications': (500, 240)
+        }
+        
+        # Icon size
+        icon_size = 80
+        
+        # Text size
+        text_size = 12
+        
+        # Window position in ((x, y), (w, h)) format
+        window_rect = ((100, 100), (640, 480))
+        
+        # Background positioning
+        background_position = 'center'
+        
+        # Show status bar
+        show_status_bar = False
+        
+        # Show icon preview
+        show_icon_preview = False
+        
+        # Show item info
+        show_item_info = False
+        
+        # Use drop shadow
+        use_drop_shadow = True
+        EOF
+        
+        # Create DMG
         DMG_NAME="MSTeamsWaker-${VERSION}.dmg"
-        mkisofs -V "MS Teams Waker ${VERSION}" \
-          -D -R -apple -no-pad \
-          -o "$DMG_NAME" \
-          dmg_contents
+        dmgbuild -s dmgbuild_settings.py "MS Teams Waker ${VERSION}" "$DMG_NAME"
     
     - name: Upload DMG artifact
       uses: actions/upload-artifact@v4
