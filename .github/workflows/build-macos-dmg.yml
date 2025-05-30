@@ -26,11 +26,10 @@ jobs:
         python -m pip install --upgrade pip
         pip install PyQt5 pyinstaller
         sudo apt-get update
-        sudo apt-get install -y imagemagick
+        sudo apt-get install -y imagemagick genisoimage
     
     - name: Create app icon
       run: |
-        mkdir -p icons.iconset
         # Create a placeholder icon if none exists
         if [ ! -f app_icon.png ]; then
           convert -size 1024x1024 xc:none -fill "#0078d4" -draw "circle 512,512 512,256" -pointsize 512 -font Arial -gravity center -fill white -annotate 0 "TW" app_icon.png
@@ -42,33 +41,28 @@ jobs:
         VERSION_PY="version.py"
         echo "VERSION = '${VERSION}'" > $VERSION_PY
         
-        # Build a single-file executable instead of a directory
+        # Build a single-file executable
         pyinstaller --name="MSTeamsWaker" \
           --onefile \
           --add-data="README.md:." \
           --add-data="${VERSION_PY}:." \
           teams_waker_app.py
         
-        # Debug output to see what PyInstaller created
-        find dist -type f | sort
+        # Debug output
+        ls -la dist/
     
-    - name: Create DMG using dmg-builder
+    - name: Create macOS app structure
       run: |
-        # Install Node.js and dmg-builder
-        curl -fsSL https://deb.nodesource.com/setup_16.x | sudo -E bash -
-        sudo apt-get install -y nodejs
-        sudo npm install -g appdmg
-        
-        # Create a directory structure for the DMG
-        mkdir -p dmg_temp/MSTeamsWaker.app/Contents/MacOS
-        mkdir -p dmg_temp/MSTeamsWaker.app/Contents/Resources
+        # Create a directory structure for the app
+        mkdir -p dmg_contents/MSTeamsWaker.app/Contents/MacOS
+        mkdir -p dmg_contents/MSTeamsWaker.app/Contents/Resources
         
         # Copy the executable to the .app structure
-        cp dist/MSTeamsWaker dmg_temp/MSTeamsWaker.app/Contents/MacOS/
-        chmod +x dmg_temp/MSTeamsWaker.app/Contents/MacOS/MSTeamsWaker
+        cp dist/MSTeamsWaker dmg_contents/MSTeamsWaker.app/Contents/MacOS/
+        chmod +x dmg_contents/MSTeamsWaker.app/Contents/MacOS/MSTeamsWaker
         
         # Create Info.plist
-        cat > dmg_temp/MSTeamsWaker.app/Contents/Info.plist << EOF
+        cat > dmg_contents/MSTeamsWaker.app/Contents/Info.plist << EOF
         <?xml version="1.0" encoding="UTF-8"?>
         <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
         <plist version="1.0">
@@ -99,28 +93,26 @@ jobs:
         
         # Copy icon if it exists
         if [ -f app_icon.png ]; then
-          cp app_icon.png dmg_temp/MSTeamsWaker.app/Contents/Resources/AppIcon.icns
+          cp app_icon.png dmg_contents/MSTeamsWaker.app/Contents/Resources/AppIcon.icns
         fi
         
         # Create a background image
-        convert -size 800x500 gradient:blue-black -font Arial -pointsize 36 -fill white -gravity center -annotate 0 "MS Teams Waker ${VERSION}\nDrag to Applications folder to install" background.png
+        convert -size 800x500 gradient:blue-black -font Arial -pointsize 36 -fill white -gravity center -annotate 0 "MS Teams Waker ${VERSION}\nDrag to Applications folder to install" dmg_contents/background.png
         
-        # Create appdmg config
-        cat > appdmg.json << EOF
-        {
-          "title": "MS Teams Waker",
-          "icon": "app_icon.png",
-          "background": "background.png",
-          "contents": [
-            { "x": 448, "y": 344, "type": "link", "path": "/Applications" },
-            { "x": 192, "y": 344, "type": "file", "path": "dmg_temp/MSTeamsWaker.app" }
-          ]
-        }
-        EOF
+        # Create a symbolic link to /Applications
+        mkdir -p dmg_contents/Applications
+        ln -s /Applications dmg_contents/Applications
         
-        # Create DMG
+        # Debug output
+        find dmg_contents -type f | sort
+    
+    - name: Create DMG using mkisofs
+      run: |
         DMG_NAME="MSTeamsWaker-${VERSION}.dmg"
-        appdmg appdmg.json "$DMG_NAME"
+        mkisofs -V "MS Teams Waker ${VERSION}" \
+          -D -R -apple -no-pad \
+          -o "$DMG_NAME" \
+          dmg_contents
     
     - name: Upload DMG artifact
       uses: actions/upload-artifact@v4
