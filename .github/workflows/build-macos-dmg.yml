@@ -29,27 +29,23 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install PyQt5 pyinstaller
-        brew install create-dmg
+        brew install create-dmg imagemagick
     
     - name: Create app icon
       run: |
-        # Create a simple icon file
+        # Create a simple icon file using a different approach
         echo "Creating app icon..."
         
-        # Create a simple colored square icon
+        # Create a simple colored square with text
         mkdir -p icons.iconset
         
-        # Generate a simple colored square with text using sips
-        sips -s format png \
-          --padToHeightWidth 1024 1024 \
-          --padColor 0078D4 \
-          $(which python) \
-          --out temp_icon.png
-          
+        # Create a base PNG with a blue background
+        convert -size 1024x1024 xc:#0078D4 -fill white -gravity center -pointsize 512 -annotate 0 "TW" base_icon.png
+        
         # Create different sizes for the iconset
         for size in 16 32 64 128 256 512; do
-          sips -z $size $size temp_icon.png --out icons.iconset/icon_${size}x${size}.png
-          sips -z $((size*2)) $((size*2)) temp_icon.png --out icons.iconset/icon_${size}x${size}@2x.png
+          convert base_icon.png -resize ${size}x${size} icons.iconset/icon_${size}x${size}.png
+          convert base_icon.png -resize $((size*2))x$((size*2)) icons.iconset/icon_${size}x${size}@2x.png
         done
         
         # Convert the iconset to icns
