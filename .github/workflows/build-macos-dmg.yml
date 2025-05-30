@@ -33,30 +33,30 @@ jobs:
     
     - name: Create app icon
       run: |
-        # Create a placeholder icon if none exists
-        if [ ! -f app_icon.png ]; then
-          # Create a simple icon using macOS tools
-          echo '
-          tell application "System Events"
-              set theFile to (path to temporary items as string) & "app_icon.png"
-              tell application "Preview"
-                  activate
-                  make new document with properties {width:1024, height:1024}
-                  set background color to {0, 120, 212}
-                  set font color to {255, 255, 255}
-                  set font name to "Arial"
-                  set font size to 512
-                  set text to "TW"
-                  set position to {512, 512}
-                  save in theFile
-                  quit
-              end tell
-          end tell
-          ' > create_icon.applescript
+        # Create a simple icon file
+        echo "Creating app icon..."
+        
+        # Create a simple colored square icon
+        mkdir -p icons.iconset
+        
+        # Generate a simple colored square with text using sips
+        sips -s format png \
+          --padToHeightWidth 1024 1024 \
+          --padColor 0078D4 \
+          $(which python) \
+          --out temp_icon.png
           
-          # Use a simple circle with text
-          sips -s format png -z 1024 1024 app_icon.png --out app_icon.png || true
-        fi
+        # Create different sizes for the iconset
+        for size in 16 32 64 128 256 512; do
+          sips -z $size $size temp_icon.png --out icons.iconset/icon_${size}x${size}.png
+          sips -z $((size*2)) $((size*2)) temp_icon.png --out icons.iconset/icon_${size}x${size}@2x.png
+        done
+        
+        # Convert the iconset to icns
+        iconutil -c icns icons.iconset -o app_icon.icns
+        
+        # Verify the icon was created
+        ls -la app_icon.icns
     
     - name: Build application with PyInstaller
       run: |
@@ -67,7 +67,7 @@ jobs:
         # Build a macOS app bundle
         pyinstaller --name="MSTeamsWaker" \
           --windowed \
-          --icon=app_icon.png \
+          --icon=app_icon.icns \
           --add-data="README.md:." \
           --add-data="${VERSION_PY}:." \
           --osx-bundle-identifier="com.msteamswaker.app" \
@@ -83,7 +83,6 @@ jobs:
         
         create-dmg \
           --volname "MS Teams Waker ${VERSION}" \
-          --volicon "app_icon.png" \
           --window-pos 200 120 \
           --window-size 800 400 \
           --icon-size 100 \
