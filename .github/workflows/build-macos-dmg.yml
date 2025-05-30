@@ -1,0 +1,94 @@
+name: Build macOS DMG
+
+on:
+  push:
+    tags:
+      - '*'  # Run only when a tag is pushed
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Get tag version
+      id: get_version
+      run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install PyQt5 pyinstaller
+        sudo apt-get update
+        sudo apt-get install -y imagemagick
+    
+    - name: Create app icon
+      run: |
+        mkdir -p icons.iconset
+        # Create a placeholder icon if none exists
+        if [ ! -f app_icon.png ]; then
+          convert -size 1024x1024 xc:none -fill "#0078d4" -draw "circle 512,512 512,256" -pointsize 512 -font Arial -gravity center -fill white -annotate 0 "TW" app_icon.png
+        fi
+        
+        # Create different icon sizes
+        for size in 16 32 64 128 256 512 1024; do
+          convert app_icon.png -resize ${size}x${size} icons.iconset/icon_${size}x${size}.png
+          convert app_icon.png -resize $((size*2))x$((size*2)) icons.iconset/icon_${size}x${size}@2x.png
+        done
+    
+    - name: Build application with PyInstaller
+      run: |
+        # Update version in app
+        VERSION_PY="version.py"
+        echo "VERSION = '${VERSION}'" > $VERSION_PY
+        
+        pyinstaller --name="MSTeamsWaker" \
+          --windowed \
+          --add-data="README.md:." \
+          --add-data="${VERSION_PY}:." \
+          --osx-bundle-identifier="com.msteamswaker.app" \
+          teams_waker_app.py
+    
+    - name: Install create-dmg dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y hfsprogs hfsplus dmg2img genisoimage
+
+    - name: Create DMG structure
+      run: |
+        mkdir -p dmg_contents
+        cp -r dist/MSTeamsWaker.app dmg_contents/
+        
+        # Create a background image with version
+        convert -size 800x500 gradient:blue-black -font Arial -pointsize 36 -fill white -gravity center -annotate 0 "MS Teams Waker ${VERSION}\nDrag to Applications folder to install" background.png
+        
+        # Create a symbolic link to /Applications
+        mkdir -p dmg_contents/Applications
+        ln -s /Applications dmg_contents/Applications
+    
+    - name: Create DMG using genisoimage
+      run: |
+        DMG_NAME="MSTeamsWaker-${VERSION}.dmg"
+        genisoimage -V "MS Teams Waker ${VERSION}" \
+          -D -R -apple -no-pad \
+          -o "$DMG_NAME" \
+          dmg_contents
+    
+    - name: Upload DMG artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: MSTeamsWaker-${{ env.VERSION }}
+        path: MSTeamsWaker-${{ env.VERSION }}.dmg
+        
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: MSTeamsWaker-${{ env.VERSION }}.dmg
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
