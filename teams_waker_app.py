@@ -34,15 +34,13 @@ def _setup_cg():
     ]
     cg.CGEventPost.restype = None
     cg.CGEventPost.argtypes = [ctypes.c_uint32, ctypes.c_void_p]
+    cg.CFRelease.restype = None
     cg.CFRelease.argtypes = [ctypes.c_void_p]
     return cg
 
 
-_cg = _setup_cg()
+_cg = _setup_cg() if sys.platform == 'darwin' else None
 
-# kCGEventSourceStateCombinedSessionState = 1
-# kCGEventMouseMoved = 5
-# kCGHIDEventTap = 0
 _kCGEventSourceStateCombinedSessionState = 1
 _kCGEventMouseMoved = 5
 _kCGHIDEventTap = 0
@@ -51,19 +49,29 @@ _kCGHIDEventTap = 0
 def _post_activity_event():
     """
     Post a synthetic mouse-moved event at the current cursor position.
-    This resets kCGEventSourceStateCombinedSessionState idle time,
-    which Teams monitors to determine Away status — no focus change, no permissions.
+    Resets the system idle timer Teams polls for Away status — no focus change, no permissions.
     """
+    if _cg is None:
+        raise RuntimeError("CoreGraphics not available on this platform")
     source = _cg.CGEventSourceCreate(_kCGEventSourceStateCombinedSessionState)
-    temp = _cg.CGEventCreate(None)
-    point = _cg.CGEventGetLocation(temp)
-    _cg.CFRelease(temp)
+    if not source:
+        raise RuntimeError("CGEventSourceCreate returned NULL")
+    try:
+        temp = _cg.CGEventCreate(None)
+        if not temp:
+            raise RuntimeError("CGEventCreate returned NULL")
+        point = _cg.CGEventGetLocation(temp)
+        _cg.CFRelease(temp)
 
-    event = _cg.CGEventCreateMouseEvent(source, _kCGEventMouseMoved, point, 0)
-    _cg.CGEventPost(_kCGHIDEventTap, event)
-
-    _cg.CFRelease(event)
-    _cg.CFRelease(source)
+        event = _cg.CGEventCreateMouseEvent(source, _kCGEventMouseMoved, point, 0)
+        if not event:
+            raise RuntimeError("CGEventCreateMouseEvent returned NULL")
+        try:
+            _cg.CGEventPost(_kCGHIDEventTap, event)
+        finally:
+            _cg.CFRelease(event)
+    finally:
+        _cg.CFRelease(source)
 
 
 class WorkerSignals(QObject):
