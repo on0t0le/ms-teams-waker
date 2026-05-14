@@ -39,20 +39,55 @@ def _setup_cg():
     return cg
 
 
+def _setup_iopm():
+    iokit = ctypes.cdll.LoadLibrary('/System/Library/Frameworks/IOKit.framework/IOKit')
+    cf = ctypes.cdll.LoadLibrary(
+        '/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation'
+    )
+    cf.CFStringCreateWithCString.restype = ctypes.c_void_p
+    cf.CFStringCreateWithCString.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_uint32]
+    cf.CFRelease.restype = None
+    cf.CFRelease.argtypes = [ctypes.c_void_p]
+    iokit.IOPMAssertionDeclareUserActivity.restype = ctypes.c_uint32
+    iokit.IOPMAssertionDeclareUserActivity.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_uint32,
+        ctypes.POINTER(ctypes.c_uint32),
+    ]
+    return iokit, cf
+
+
 _cg = _setup_cg() if sys.platform == 'darwin' else None
+_iokit, _cf = _setup_iopm() if sys.platform == 'darwin' else (None, None)
 
 _kCGEventSourceStateCombinedSessionState = 1
 _kCGEventMouseMoved = 5
 _kCGHIDEventTap = 0
+_kIOPMUserActiveLocal = 0  # kIOPMUserActiveLocal from IOKit/pwr_mgt/IOPMLib.h
+_kCFStringEncodingUTF8 = 0x08000100
 
 
 def _post_activity_event():
     """
-    Post a synthetic mouse-moved event at the current cursor position.
-    Resets the system idle timer Teams polls for Away status — no focus change, no permissions.
+    Declare IOKit user activity + post synthetic mouse-moved event.
+    IOPMAssertionDeclareUserActivity resets the IOKit-level idle state Teams monitors.
+    CGEventPost resets the CGEvent idle timer as a secondary signal.
     """
-    if _cg is None:
-        raise RuntimeError("CoreGraphics not available on this platform")
+    if _cg is None or _iokit is None:
+        raise RuntimeError("CoreGraphics/IOKit not available on this platform")
+
+    # Primary: declare user activity at IOKit level (what Teams actually monitors)
+    name = _cf.CFStringCreateWithCString(None, b"MSTeamsWaker", _kCFStringEncodingUTF8)
+    if name:
+        try:
+            assertion_id = ctypes.c_uint32(0)
+            _iokit.IOPMAssertionDeclareUserActivity(
+                name, _kIOPMUserActiveLocal, ctypes.byref(assertion_id)
+            )
+        finally:
+            _cf.CFRelease(name)
+
+    # Secondary: reset CGEvent idle timer
     source = _cg.CGEventSourceCreate(_kCGEventSourceStateCombinedSessionState)
     if not source:
         raise RuntimeError("CGEventSourceCreate returned NULL")

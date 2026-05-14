@@ -10,9 +10,27 @@ import ctypes, sys
 class _CGPoint(ctypes.Structure):
     _fields_ = [('x', ctypes.c_double), ('y', ctypes.c_double)]
 
-cg = ctypes.cdll.LoadLibrary(
-    '/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics'
-)
+# IOKit — primary: resets the idle state Teams actually monitors
+iokit = ctypes.cdll.LoadLibrary('/System/Library/Frameworks/IOKit.framework/IOKit')
+cf = ctypes.cdll.LoadLibrary('/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation')
+cf.CFStringCreateWithCString.restype = ctypes.c_void_p
+cf.CFStringCreateWithCString.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_uint32]
+cf.CFRelease.restype = None
+cf.CFRelease.argtypes = [ctypes.c_void_p]
+iokit.IOPMAssertionDeclareUserActivity.restype = ctypes.c_uint32
+iokit.IOPMAssertionDeclareUserActivity.argtypes = [
+    ctypes.c_void_p, ctypes.c_uint32, ctypes.POINTER(ctypes.c_uint32)
+]
+name = cf.CFStringCreateWithCString(None, b"MSTeamsWaker", 0x08000100)  # kCFStringEncodingUTF8
+if name:
+    try:
+        assertion_id = ctypes.c_uint32(0)
+        iokit.IOPMAssertionDeclareUserActivity(name, 0, ctypes.byref(assertion_id))  # kIOPMUserActiveLocal
+    finally:
+        cf.CFRelease(name)
+
+# CoreGraphics — secondary: resets CGEvent idle timer
+cg = ctypes.cdll.LoadLibrary('/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics')
 cg.CGEventCreate.restype = ctypes.c_void_p
 cg.CGEventCreate.argtypes = [ctypes.c_void_p]
 cg.CGEventGetLocation.restype = _CGPoint
