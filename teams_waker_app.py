@@ -44,12 +44,16 @@ class TeamsWakerWorker(threading.Thread):
     
     def wake_teams(self):
         script = '''
+        set frontApp to name of first application process whose frontmost is true
         tell application "Microsoft Teams"
             activate
-            tell application "System Events"
-                keystroke "2" using command down
-            end tell
         end tell
+        delay 0.05
+        tell application "System Events"
+            keystroke "2" using command down
+        end tell
+        delay 0.05
+        tell application frontApp to activate
         '''
         result = subprocess.run(['osascript', '-e', script], capture_output=True, text=True)
         if result.returncode != 0:
