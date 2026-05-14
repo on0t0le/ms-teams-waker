@@ -23,41 +23,26 @@ class TeamsWakerWorker(threading.Thread):
         self.interval_minutes = interval_minutes
         self.running = True
         self.signals = signals
-        self.caffeinate_process = None
         
     def run(self):
         self.log("Teams waker started")
-        
-        # Start caffeinate to prevent sleep
-        try:
-            self.caffeinate_process = subprocess.Popen(['caffeinate', '-d'])
-            self.log("System sleep prevention activated")
-        except Exception as e:
-            self.log(f"Failed to prevent sleep: {e}")
-        
+
         while self.running:
             try:
                 self.wake_teams()
                 self.log("Teams refreshed")
-                
-                # Sleep for the specified interval
-                for _ in range(int(self.interval_minutes * 60)):
+
+                for _ in range(self.interval_minutes * 60):
                     if not self.running:
                         break
                     time.sleep(1)
             except Exception as e:
                 self.log(f"Error: {e}")
-                time.sleep(60)  # Wait a minute before retrying
-        
-        # Clean up caffeinate process
-        if self.caffeinate_process:
-            self.caffeinate_process.terminate()
-            self.log("System sleep prevention deactivated")
-        
+                time.sleep(60)
+
         self.log("Teams waker stopped")
     
     def wake_teams(self):
-        # AppleScript to activate Teams and simulate Command+2 keystroke
         script = '''
         tell application "Microsoft Teams"
             activate
@@ -66,7 +51,9 @@ class TeamsWakerWorker(threading.Thread):
             end tell
         end tell
         '''
-        subprocess.run(['osascript', '-e', script])
+        result = subprocess.run(['osascript', '-e', script], capture_output=True, text=True)
+        if result.returncode != 0:
+            raise RuntimeError(result.stderr.strip())
     
     def stop(self):
         self.running = False
@@ -80,6 +67,7 @@ class TeamsWakerApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.worker = None
+        self.caffeinate_process = None
         self.worker_signals = WorkerSignals()
         self.worker_signals.log_update.connect(self.update_log)
         self.init_ui()
@@ -134,19 +122,30 @@ class TeamsWakerApp(QMainWindow):
     def start_waker(self):
         interval = self.interval_spinbox.value()
         self.worker = TeamsWakerWorker(interval, self.worker_signals)
-        self.worker.daemon = True
         self.worker.start()
-        
+
+        try:
+            self.caffeinate_process = subprocess.Popen(['caffeinate', '-d'])
+            self.update_log(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] System sleep prevention activated")
+        except Exception as e:
+            self.update_log(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Failed to prevent sleep: {e}")
+
         self.start_button.setEnabled(False)
         self.stop_button.setEnabled(True)
         self.interval_spinbox.setEnabled(False)
         self.statusBar().showMessage("Running")
-    
+
     def stop_waker(self):
+        if self.caffeinate_process:
+            self.caffeinate_process.terminate()
+            self.caffeinate_process = None
+            self.update_log(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] System sleep prevention deactivated")
+
         if self.worker:
             self.worker.stop()
+            self.worker.join(timeout=5)
             self.worker = None
-        
+
         self.start_button.setEnabled(True)
         self.stop_button.setEnabled(False)
         self.interval_spinbox.setEnabled(True)
