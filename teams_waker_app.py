@@ -2,20 +2,81 @@ import sys
 import threading
 import time
 import subprocess
-import os
-from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
-                            QHBoxLayout, QLabel, QPushButton, QSpinBox, 
+import ctypes
+from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
+                            QHBoxLayout, QLabel, QPushButton, QSpinBox,
                             QTextEdit, QMessageBox)
 from PyQt5.QtCore import Qt, pyqtSignal, QObject
 
-# Try to import version information
 try:
     from version import VERSION
 except ImportError:
     VERSION = "dev"
 
+
+class _CGPoint(ctypes.Structure):
+    _fields_ = [('x', ctypes.c_double), ('y', ctypes.c_double)]
+
+
+def _setup_cg():
+    cg = ctypes.cdll.LoadLibrary(
+        '/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics'
+    )
+    cg.CGEventCreate.restype = ctypes.c_void_p
+    cg.CGEventCreate.argtypes = [ctypes.c_void_p]
+    cg.CGEventGetLocation.restype = _CGPoint
+    cg.CGEventGetLocation.argtypes = [ctypes.c_void_p]
+    cg.CGEventSourceCreate.restype = ctypes.c_void_p
+    cg.CGEventSourceCreate.argtypes = [ctypes.c_int]
+    cg.CGEventCreateMouseEvent.restype = ctypes.c_void_p
+    cg.CGEventCreateMouseEvent.argtypes = [
+        ctypes.c_void_p, ctypes.c_uint32, _CGPoint, ctypes.c_uint32
+    ]
+    cg.CGEventPost.restype = None
+    cg.CGEventPost.argtypes = [ctypes.c_uint32, ctypes.c_void_p]
+    cg.CFRelease.restype = None
+    cg.CFRelease.argtypes = [ctypes.c_void_p]
+    return cg
+
+
+_cg = _setup_cg() if sys.platform == 'darwin' else None
+
+_kCGEventSourceStateCombinedSessionState = 1
+_kCGEventMouseMoved = 5
+_kCGHIDEventTap = 0
+
+
+def _post_activity_event():
+    """
+    Post a synthetic mouse-moved event at the current cursor position.
+    Resets the system idle timer Teams polls for Away status — no focus change, no permissions.
+    """
+    if _cg is None:
+        raise RuntimeError("CoreGraphics not available on this platform")
+    source = _cg.CGEventSourceCreate(_kCGEventSourceStateCombinedSessionState)
+    if not source:
+        raise RuntimeError("CGEventSourceCreate returned NULL")
+    try:
+        temp = _cg.CGEventCreate(None)
+        if not temp:
+            raise RuntimeError("CGEventCreate returned NULL")
+        point = _cg.CGEventGetLocation(temp)
+        _cg.CFRelease(temp)
+
+        event = _cg.CGEventCreateMouseEvent(source, _kCGEventMouseMoved, point, 0)
+        if not event:
+            raise RuntimeError("CGEventCreateMouseEvent returned NULL")
+        try:
+            _cg.CGEventPost(_kCGHIDEventTap, event)
+        finally:
+            _cg.CFRelease(event)
+    finally:
+        _cg.CFRelease(source)
+
+
 class WorkerSignals(QObject):
     log_update = pyqtSignal(str)
+
 
 class TeamsWakerWorker(threading.Thread):
     def __init__(self, interval_minutes, signals):
@@ -23,15 +84,13 @@ class TeamsWakerWorker(threading.Thread):
         self.interval_minutes = interval_minutes
         self.running = True
         self.signals = signals
-        
+
     def run(self):
         self.log("Teams waker started")
-
         while self.running:
             try:
-                self.wake_teams()
-                self.log("Teams refreshed")
-
+                _post_activity_event()
+                self.log("Activity signal sent")
                 for _ in range(self.interval_minutes * 60):
                     if not self.running:
                         break
@@ -39,41 +98,15 @@ class TeamsWakerWorker(threading.Thread):
             except Exception as e:
                 self.log(f"Error: {e}")
                 time.sleep(60)
-
         self.log("Teams waker stopped")
-    
-    def wake_teams(self):
-        script = '''
-        try
-            set frontApp to name of first application process whose frontmost is true
-        on error
-            set frontApp to "Finder"
-        end try
-        tell application "Microsoft Teams"
-            activate
-        end tell
-        delay 0.2
-        tell application "System Events"
-            keystroke "2" using command down
-        end tell
-        delay 0.2
-        tell application frontApp to activate
-        frontApp
-        '''
-        result = subprocess.run(['osascript', '-e', script], capture_output=True, text=True)
-        if result.returncode != 0:
-            raise RuntimeError(result.stderr.strip())
-        restored_app = result.stdout.strip()
-        if restored_app:
-            self.log(f"Focus restored to {restored_app}")
-    
+
     def stop(self):
         self.running = False
-    
+
     def log(self, message):
         timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-        log_message = f"[{timestamp}] {message}"
-        self.signals.log_update.emit(log_message)
+        self.signals.log_update.emit(f"[{timestamp}] {message}")
+
 
 class TeamsWakerApp(QMainWindow):
     def __init__(self):
@@ -83,23 +116,20 @@ class TeamsWakerApp(QMainWindow):
         self.worker_signals = WorkerSignals()
         self.worker_signals.log_update.connect(self.update_log)
         self.init_ui()
-        
+
     def init_ui(self):
         self.setWindowTitle(f"MS Teams Waker v{VERSION}")
         self.setMinimumSize(500, 400)
-        
-        # Main widget and layout
+
         main_widget = QWidget()
         main_layout = QVBoxLayout()
         main_widget.setLayout(main_layout)
         self.setCentralWidget(main_widget)
-        
-        # Version label
+
         version_label = QLabel(f"Version: {VERSION}")
         version_label.setAlignment(Qt.AlignRight)
         main_layout.addWidget(version_label)
-        
-        # Interval setting
+
         interval_layout = QHBoxLayout()
         interval_label = QLabel("Wake frequency (minutes):")
         self.interval_spinbox = QSpinBox()
@@ -109,8 +139,7 @@ class TeamsWakerApp(QMainWindow):
         interval_layout.addWidget(self.interval_spinbox)
         interval_layout.addStretch()
         main_layout.addLayout(interval_layout)
-        
-        # Control buttons
+
         button_layout = QHBoxLayout()
         self.start_button = QPushButton("Start")
         self.start_button.clicked.connect(self.start_waker)
@@ -120,17 +149,15 @@ class TeamsWakerApp(QMainWindow):
         button_layout.addWidget(self.start_button)
         button_layout.addWidget(self.stop_button)
         main_layout.addLayout(button_layout)
-        
-        # Log area
+
         log_label = QLabel("Activity Log:")
         main_layout.addWidget(log_label)
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
         main_layout.addWidget(self.log_text)
-        
-        # Status bar
+
         self.statusBar().showMessage("Ready")
-    
+
     def start_waker(self):
         interval = self.interval_spinbox.value()
         self.worker = TeamsWakerWorker(interval, self.worker_signals)
@@ -138,9 +165,13 @@ class TeamsWakerApp(QMainWindow):
 
         try:
             self.caffeinate_process = subprocess.Popen(['caffeinate', '-d'])
-            self.update_log(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] System sleep prevention activated")
+            self.update_log(
+                f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] System sleep prevention activated"
+            )
         except Exception as e:
-            self.update_log(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Failed to prevent sleep: {e}")
+            self.update_log(
+                f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Failed to prevent sleep: {e}"
+            )
 
         self.start_button.setEnabled(False)
         self.stop_button.setEnabled(True)
@@ -151,7 +182,9 @@ class TeamsWakerApp(QMainWindow):
         if self.caffeinate_process:
             self.caffeinate_process.terminate()
             self.caffeinate_process = None
-            self.update_log(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] System sleep prevention deactivated")
+            self.update_log(
+                f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] System sleep prevention deactivated"
+            )
 
         if self.worker:
             self.worker.stop()
@@ -162,30 +195,32 @@ class TeamsWakerApp(QMainWindow):
         self.stop_button.setEnabled(False)
         self.interval_spinbox.setEnabled(True)
         self.statusBar().showMessage("Stopped")
-    
+
     def update_log(self, message):
         self.log_text.append(message)
-        # Auto-scroll to bottom
         scrollbar = self.log_text.verticalScrollBar()
         scrollbar.setValue(scrollbar.maximum())
-    
+
     def closeEvent(self, event):
         if self.worker:
-            reply = QMessageBox.question(self, 'Confirm Exit',
+            reply = QMessageBox.question(
+                self, 'Confirm Exit',
                 "The Teams waker is still running. Stop it and exit?",
-                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-            
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+            )
             if reply == QMessageBox.Yes:
                 self.stop_waker()
                 event.accept()
             else:
                 event.ignore()
 
+
 def main():
     app = QApplication(sys.argv)
     window = TeamsWakerApp()
     window.show()
     sys.exit(app.exec_())
+
 
 if __name__ == "__main__":
     main()
