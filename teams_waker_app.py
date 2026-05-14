@@ -34,6 +34,8 @@ def _setup_cg():
     ]
     cg.CGEventPost.restype = None
     cg.CGEventPost.argtypes = [ctypes.c_uint32, ctypes.c_void_p]
+    cg.CGEventPostToPid.restype = None
+    cg.CGEventPostToPid.argtypes = [ctypes.c_int32, ctypes.c_void_p]
     cg.CFRelease.restype = None
     cg.CFRelease.argtypes = [ctypes.c_void_p]
     return cg
@@ -63,20 +65,33 @@ _iokit, _cf = _setup_iopm() if sys.platform == 'darwin' else (None, None)
 _kCGEventSourceStateCombinedSessionState = 1
 _kCGEventMouseMoved = 5
 _kCGHIDEventTap = 0
+_kCGSessionEventTap = 1  # no Accessibility permission required
 _kIOPMUserActiveLocal = 0  # kIOPMUserActiveLocal from IOKit/pwr_mgt/IOPMLib.h
 _kCFStringEncodingUTF8 = 0x08000100
 
 
+def _teams_pids():
+    try:
+        out = subprocess.check_output(
+            ['pgrep', '-if', 'microsoft teams'], text=True, timeout=2
+        )
+        return [int(p) for p in out.strip().split() if p.strip().isdigit()]
+    except Exception:
+        return []
+
+
 def _post_activity_event():
     """
-    Declare IOKit user activity + post synthetic mouse-moved event.
-    IOPMAssertionDeclareUserActivity resets the IOKit-level idle state Teams monitors.
-    CGEventPost resets the CGEvent idle timer as a secondary signal.
+    Three-layer idle reset:
+      1. IOPMAssertionDeclareUserActivity — resets IOKit-level idle timer
+      2. CGEventPost(kCGSessionEventTap) — resets CGEventSource CombinedSession idle
+         without requiring Accessibility permission
+      3. CGEventPostToPid to each Teams process — resets Teams' own Electron event queue
     """
     if _cg is None or _iokit is None:
         raise RuntimeError("CoreGraphics/IOKit not available on this platform")
 
-    # Primary: declare user activity at IOKit level (what Teams actually monitors)
+    # 1. IOKit-level user activity declaration
     name = _cf.CFStringCreateWithCString(None, b"MSTeamsWaker", _kCFStringEncodingUTF8)
     if name:
         try:
@@ -87,7 +102,6 @@ def _post_activity_event():
         finally:
             _cf.CFRelease(name)
 
-    # Secondary: reset CGEvent idle timer
     source = _cg.CGEventSourceCreate(_kCGEventSourceStateCombinedSessionState)
     if not source:
         raise RuntimeError("CGEventSourceCreate returned NULL")
@@ -97,12 +111,18 @@ def _post_activity_event():
             raise RuntimeError("CGEventCreate returned NULL")
         point = _cg.CGEventGetLocation(temp)
         _cg.CFRelease(temp)
+        point.x += 1  # non-zero delta avoids zero-move filtering
 
         event = _cg.CGEventCreateMouseEvent(source, _kCGEventMouseMoved, point, 0)
         if not event:
             raise RuntimeError("CGEventCreateMouseEvent returned NULL")
         try:
-            _cg.CGEventPost(_kCGHIDEventTap, event)
+            # 2. Session-level system post (no Accessibility needed)
+            _cg.CGEventPost(_kCGSessionEventTap, event)
+
+            # 3. Direct post into each Teams process event queue
+            for pid in _teams_pids():
+                _cg.CGEventPostToPid(pid, event)
         finally:
             _cg.CFRelease(event)
     finally:
@@ -169,7 +189,7 @@ class TeamsWakerApp(QMainWindow):
         interval_label = QLabel("Wake frequency (minutes):")
         self.interval_spinbox = QSpinBox()
         self.interval_spinbox.setRange(1, 60)
-        self.interval_spinbox.setValue(5)
+        self.interval_spinbox.setValue(4)
         interval_layout.addWidget(interval_label)
         interval_layout.addWidget(self.interval_spinbox)
         interval_layout.addStretch()
