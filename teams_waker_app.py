@@ -63,7 +63,7 @@ _iokit, _cf = _setup_iopm() if sys.platform == 'darwin' else (None, None)
 _kCGEventSourceStateCombinedSessionState = 1
 _kCGEventMouseMoved = 5
 _kCGHIDEventTap = 0
-_kIOPMUserActiveLocal = 0
+_kIOPMUserActiveLocal = 0  # kIOPMUserActiveLocal from IOKit/pwr_mgt/IOPMLib.h
 _kCFStringEncodingUTF8 = 0x08000100
 
 

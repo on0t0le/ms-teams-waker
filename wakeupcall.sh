@@ -21,11 +21,13 @@ iokit.IOPMAssertionDeclareUserActivity.restype = ctypes.c_uint32
 iokit.IOPMAssertionDeclareUserActivity.argtypes = [
     ctypes.c_void_p, ctypes.c_uint32, ctypes.POINTER(ctypes.c_uint32)
 ]
-name = cf.CFStringCreateWithCString(None, b"MSTeamsWaker", 0x08000100)
+name = cf.CFStringCreateWithCString(None, b"MSTeamsWaker", 0x08000100)  # kCFStringEncodingUTF8
 if name:
-    assertion_id = ctypes.c_uint32(0)
-    iokit.IOPMAssertionDeclareUserActivity(name, 0, ctypes.byref(assertion_id))
-    cf.CFRelease(name)
+    try:
+        assertion_id = ctypes.c_uint32(0)
+        iokit.IOPMAssertionDeclareUserActivity(name, 0, ctypes.byref(assertion_id))  # kIOPMUserActiveLocal
+    finally:
+        cf.CFRelease(name)
 
 # CoreGraphics — secondary: resets CGEvent idle timer
 cg = ctypes.cdll.LoadLibrary('/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics')
@@ -42,7 +44,7 @@ cg.CGEventPost.argtypes = [ctypes.c_uint32, ctypes.c_void_p]
 cg.CFRelease.restype = None
 cg.CFRelease.argtypes = [ctypes.c_void_p]
 
-source = cg.CGEventSourceCreate(1)
+source = cg.CGEventSourceCreate(1)  # kCGEventSourceStateCombinedSessionState
 if not source:
     sys.exit(1)
 try:
@@ -51,11 +53,11 @@ try:
         sys.exit(1)
     point = cg.CGEventGetLocation(temp)
     cg.CFRelease(temp)
-    event = cg.CGEventCreateMouseEvent(source, 5, point, 0)
+    event = cg.CGEventCreateMouseEvent(source, 5, point, 0)  # kCGEventMouseMoved
     if not event:
         sys.exit(1)
     try:
-        cg.CGEventPost(0, event)
+        cg.CGEventPost(0, event)  # kCGHIDEventTap
     finally:
         cg.CFRelease(event)
 finally:
