@@ -4,8 +4,18 @@ CAFF_PID=$!
 trap "kill $CAFF_PID" EXIT INT TERM
 
 while true; do
-    osascript -e 'tell application "Microsoft Teams" to activate'
-    osascript -e 'tell application "System Events" to keystroke "2" using {command down}'
+    osascript -e '
+        try
+            set frontApp to name of first application process whose frontmost is true
+        on error
+            set frontApp to "Finder"
+        end try
+        tell application "Microsoft Teams" to activate
+        delay 0.2
+        tell application "System Events" to keystroke "2" using command down
+        delay 0.2
+        tell application frontApp to activate
+    '
     echo "Teams Status Refreshed"
     sleep 300
 done

@@ -44,16 +44,28 @@ class TeamsWakerWorker(threading.Thread):
     
     def wake_teams(self):
         script = '''
+        try
+            set frontApp to name of first application process whose frontmost is true
+        on error
+            set frontApp to "Finder"
+        end try
         tell application "Microsoft Teams"
             activate
-            tell application "System Events"
-                keystroke "2" using command down
-            end tell
         end tell
+        delay 0.2
+        tell application "System Events"
+            keystroke "2" using command down
+        end tell
+        delay 0.2
+        tell application frontApp to activate
+        frontApp
         '''
         result = subprocess.run(['osascript', '-e', script], capture_output=True, text=True)
         if result.returncode != 0:
             raise RuntimeError(result.stderr.strip())
+        restored_app = result.stdout.strip()
+        if restored_app:
+            self.log(f"Focus restored to {restored_app}")
     
     def stop(self):
         self.running = False
