@@ -2,81 +2,87 @@ name: Build macOS DMG
 
 on:
   push:
-    tags:
-      - '*'  # Run only when a tag is pushed
+    branches: [ main ]
+    paths-ignore:
+      - ".github/**"
+      - "**.md"
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version bump type"
+        required: false
+        default: patch
+        type: choice
+        options: [ patch, minor, major ]
 
-# Add permissions block to explicitly grant release creation permission
 permissions:
   contents: write
 
 jobs:
+  tag:
+    runs-on: ubuntu-latest
+    outputs:
+      new_tag: ${{ steps.tag.outputs.new_tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Bump version and push tag
+        id: tag
+        uses: anothrNick/github-tag-action@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WITH_V: true
+          DEFAULT_BUMP: ${{ inputs.bump || 'patch' }}
+          MAJOR_STRING_TOKEN: "BREAKING CHANGE"
+          MINOR_STRING_TOKEN: "feat:"
+          PATCH_STRING_TOKEN: "fix:"
+
   build:
+    needs: tag
     runs-on: macos-latest
-    
+
     steps:
     - uses: actions/checkout@v4
-    
-    - name: Get tag version
-      id: get_version
-      run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
-    
+      with:
+        ref: main
+
+    - name: Set version env
+      env:
+        NEW_TAG: ${{ needs.tag.outputs.new_tag }}
+      run: echo "VERSION=$NEW_TAG" >> "$GITHUB_ENV"
+
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
         python-version: '3.9'
-    
+
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
         pip install PyQt5 pyinstaller
-        brew install create-dmg imagemagick
-    
-    - name: Create app icon
-      run: |
-        # Create a simple icon file using a different approach
-        echo "Creating app icon..."
-        
-        # Create a simple colored square with text
-        mkdir -p icons.iconset
-        
-        # Create a base PNG with a blue background
-        convert -size 1024x1024 xc:#0078D4 -fill white -gravity center -pointsize 512 -annotate 0 "TW" base_icon.png
-        
-        # Create different sizes for the iconset
-        for size in 16 32 64 128 256 512; do
-          convert base_icon.png -resize ${size}x${size} icons.iconset/icon_${size}x${size}.png
-          convert base_icon.png -resize $((size*2))x$((size*2)) icons.iconset/icon_${size}x${size}@2x.png
-        done
-        
-        # Convert the iconset to icns
-        iconutil -c icns icons.iconset -o app_icon.icns
-        
-        # Verify the icon was created
-        ls -la app_icon.icns
-    
+        brew install create-dmg
+
     - name: Build application with PyInstaller
       run: |
-        # Update version in app
         VERSION_PY="version.py"
         echo "VERSION = '${VERSION}'" > $VERSION_PY
-        
-        # Build a macOS app bundle
+
         pyinstaller --name="MSTeamsWaker" \
           --windowed \
-          --icon=app_icon.icns \
+          --icon=assets/app_icon.icns \
           --add-data="README.md:." \
           --add-data="${VERSION_PY}:." \
           --osx-bundle-identifier="com.msteamswaker.app" \
           teams_waker_app.py
-        
-        # Debug output
+
         ls -la dist/
-    
-    - name: Create DMG using create-dmg
+
+    - name: Create DMG
       run: |
-        # Create DMG with proper layout
         DMG_NAME="MSTeamsWaker-${VERSION}.dmg"
-        
+
         create-dmg \
           --volname "MS Teams Waker ${VERSION}" \
           --window-pos 200 120 \
@@ -87,14 +93,17 @@ jobs:
           --app-drop-link 600 185 \
           "$DMG_NAME" \
           "dist/MSTeamsWaker.app"
-    
+
     - name: Upload DMG artifact
       uses: actions/upload-artifact@v4
       with:
         name: MSTeamsWaker-${{ env.VERSION }}
         path: MSTeamsWaker-${{ env.VERSION }}.dmg
-        
+
     - name: Create GitHub Release
       uses: softprops/action-gh-release@v2
       with:
+        tag_name: ${{ needs.tag.outputs.new_tag }}
+        name: ${{ needs.tag.outputs.new_tag }}
         files: MSTeamsWaker-${{ env.VERSION }}.dmg
+        generate_release_notes: true
