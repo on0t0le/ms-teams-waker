@@ -6,7 +6,9 @@ trap "kill $CAFF_PID" EXIT INT TERM
 while true; do
     osascript -e '
         try
-            set frontApp to name of first application process whose frontmost is true
+            tell application "System Events"
+                set frontApp to name of first application process whose frontmost is true
+            end tell
         on error
             set frontApp to "Finder"
         end try
@@ -14,7 +16,7 @@ while true; do
         delay 0.2
         tell application "System Events" to keystroke "2" using command down
         delay 0.2
-        tell application frontApp to activate
+        tell application (frontApp) to activate
     '
     echo "Teams Status Refreshed"
     sleep 300
